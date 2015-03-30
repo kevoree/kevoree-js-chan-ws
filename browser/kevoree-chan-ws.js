@@ -13644,6 +13644,12 @@ for (var i = 0; i < R; i++) {
 
 exports.parse = parse;
 function parse(version, loose) {
+  if (version instanceof SemVer)
+    return version;
+
+  if (typeof version !== 'string')
+    return null;
+
   if (version.length > MAX_LENGTH)
     return null;
 
@@ -13717,7 +13723,12 @@ function SemVer(version, loose) {
     this.prerelease = [];
   else
     this.prerelease = m[4].split('.').map(function(id) {
-      return (/^[0-9]+$/.test(id)) ? +id : id;
+      if (/^[0-9]+$/.test(id)) {
+        var num = +id
+        if (num >= 0 && num < MAX_SAFE_INTEGER)
+          return num
+      }
+      return id;
     });
 
   this.build = m[5] ? m[5].split('.') : [];
@@ -55854,7 +55865,18 @@ var events      = require('events'),
     util        = require('util'),
     uuid        = require('node-uuid'),
     chalk       = require('chalk'),
+    answer      = require('./actions/client/answer'),
+    message     = require('./actions/client/message'),
+    registered  = require('./actions/client/registered'),
+    unregistered= require('./actions/client/unregistered');
     WebSocket   = require('ws');
+
+var actions = {
+    answer: answer,
+    message: message,
+    registered: registered,
+    unregistered: unregistered
+};
 
 /**
  *
@@ -55908,15 +55930,14 @@ Client.prototype._messageHandler = function (data) {
         msg = JSON.parse(msg);
 //        console.log(chalk.bold.blue(this.id));
 //        console.log(JSON.stringify(msg, null, 2));
-        var action = require('./actions/client/'+msg.action);
-        if (action instanceof Function) {
+        if (actions[msg.action] instanceof Function) {
             try {
-                action(this, this.conn, msg);
+                actions[msg.action](this, this.conn, msg);
             } catch (err) {
                 this.emit('error', err);
             }
         } else {
-            this.emit('error', new Error('"action" module must be Functions (action "'+msg.action+'" is a '+typeof action+')'));
+            this.emit('error', new Error('"action" module must be Functions (action "'+msg.action+'" is a '+typeof actions[msg.action]+')'));
         }
     } catch (err) {
         if (err.code === 'MODULE_NOT_FOUND') {
@@ -55970,13 +55991,23 @@ Client.prototype.off = function (eventName, eventHandler) {
 };
 
 module.exports = Client;
-},{"chalk":117,"events":6,"node-uuid":125,"util":34,"ws":126}],115:[function(require,module,exports){
+},{"./actions/client/answer":116,"./actions/client/message":117,"./actions/client/registered":118,"./actions/client/unregistered":119,"chalk":124,"events":6,"node-uuid":132,"util":34,"ws":133}],115:[function(require,module,exports){
 // Created by leiko on 29/10/14 14:57
 var util        = require('util'),
     events      = require('events'),
     WebSocket   = require('ws'),
     chalk       = require('chalk'),
+    answer      = require('./actions/server/answer'),
+    register    = require('./actions/server/register'),
+    send        = require('./actions/server/send'),
     unregister  = require('./actions/server/unregister');
+
+var actions = {
+    answer: answer,
+    register: register,
+    send: send,
+    unregister: unregister
+};
 
 /**
  *
@@ -56043,15 +56074,14 @@ Server.prototype._messageHandler = function (ws, data) {
         msg = JSON.parse(msg);
         //console.log(chalk.bold.gray('server'));
         //console.log(JSON.stringify(msg, null, 2));
-        var action = require('./actions/server/'+msg.action);
-        if (action instanceof Function) {
+        if (actions[msg.action] instanceof Function) {
             try {
-                action(this, ws, msg);
+                actions[msg.action](this, ws, msg);
             } catch (err) {
                 this.emit('error', err);
             }
         } else {
-            this.emit('error', new Error('"action" module must be Functions (action "'+msg.action+'" is a '+typeof action+')'));
+            this.emit('error', new Error('"action" module must be Functions (action "'+msg.action+'" is a '+typeof actions[msg.action]+')'));
         }
     } catch (err) {
         if (err.code === 'MODULE_NOT_FOUND') {
@@ -56097,7 +56127,186 @@ Server.prototype._forgetAck = function (ack) {
 
 module.exports = Server;
 
-},{"./actions/server/unregister":116,"chalk":117,"events":6,"util":34,"ws":126}],116:[function(require,module,exports){
+},{"./actions/server/answer":120,"./actions/server/register":121,"./actions/server/send":122,"./actions/server/unregister":123,"chalk":124,"events":6,"util":34,"ws":133}],116:[function(require,module,exports){
+// Created by leiko on 13/10/14 16:04
+
+/**
+ * This 'answer' action processes received messages
+ * @param client
+ * @param serverConn
+ * @param msg
+ */
+module.exports = function (client, serverConn, msg) {
+    var callback = client.ack2callback[msg.ack];
+    if (callback instanceof Function) {
+        if (typeof msg.from === 'undefined' || typeof msg.message === 'undefined') {
+            client.emit('error', new Error('Unable to parse "answer" message (msg.from or msg.message are undefined)'));
+        } else {
+            callback(msg.from, msg.message);
+        }
+    } else {
+        client.emit('error', new Error('Unable to find callback method for '+client.id+' and ack = '+msg.ack));
+    }
+};
+},{}],117:[function(require,module,exports){
+// Created by leiko on 13/10/14 16:37
+
+/**
+ * This 'message' action processes received messages
+ * @param client
+ * @param serverConn
+ * @param msg
+ */
+module.exports = function (client, serverConn, msg) {
+
+    if (msg.ack) {
+        client.emit('message', msg.message, {
+            send: function (response) {
+                serverConn.send(JSON.stringify({
+                    action: 'answer',
+                    ack: msg.ack,
+                    message: response,
+                    from: client.id
+                }))
+            }
+        });
+
+    } else {
+        client.emit('message', msg.message);
+    }
+};
+},{}],118:[function(require,module,exports){
+// Created by leiko on 13/10/14 16:04
+
+/**
+ * This 'registered' action acknowledge that the server has registered the user
+ * @param client
+ */
+module.exports = function (client) {
+    client.emit('registered');
+};
+},{}],119:[function(require,module,exports){
+// Created by leiko on 13/10/14 16:04
+
+/**
+ * This 'registered' action acknowledge that the server has registered the user
+ * @param client
+ */
+module.exports = function (client, serverConn, msg) {
+    client.emit('unregistered', msg.id);
+};
+},{}],120:[function(require,module,exports){
+// Created by leiko on 13/10/14 16:04
+var WebSocket = require('ws');
+
+/**
+ * This 'answer' action processes received answers
+ * @param server
+ * @param ws
+ * @param msg
+ */
+module.exports = function (server, ws, msg) {
+    if (msg.ack) {
+        if (server.ack2ws[msg.ack]) {
+            // no answer have been given yet
+            var clientId = server.ws2id[server.ack2ws[msg.ack]];
+            var askerWs = server.id2ws[clientId];
+            if (askerWs) {
+                var answer = {
+                    action: 'answer',
+                    ack: msg.ack,
+                    from: server.ws2id[ws.broker_uuid]
+                };
+                if (typeof (msg.message) !== 'undefined') {
+                    answer.message = msg.message;
+                }
+                if (askerWs && askerWs.readyState === WebSocket.OPEN) {
+                    askerWs.send(JSON.stringify(answer));
+                }
+            }
+            server._forgetAck(msg.ack);
+        }
+    } else {
+        server.emit('error', new Error('Unable to parse "answer" message (msg.ack is undefined)'));
+    }
+};
+
+},{"ws":133}],121:[function(require,module,exports){
+// Created by leiko on 13/10/14 16:04
+var uuid = require('node-uuid');
+
+module.exports = function (server, ws, msg) {
+    if (msg.id) {
+        server.id2ws[msg.id] = ws;
+        ws.broker_uuid = uuid();
+        server.ws2id[ws.broker_uuid] = msg.id;
+        ws.send(JSON.stringify({
+            action: 'registered',
+            id: msg.id
+        }));
+        server.emit('registered', msg.id);
+    } else {
+        server.emit('error', new Error('Unable to parse "register" message (msg.id is undefined)'));
+    }
+};
+},{"node-uuid":132}],122:[function(require,module,exports){
+// Created by leiko on 13/10/14 16:04
+var WebSocket = require('ws');
+
+/**
+ * This 'send' action processes received messages
+ * @param server
+ * @param ws
+ * @param msg
+ */
+module.exports = function (server, ws, msg) {
+    var err = null;
+
+    /**
+     * Re-wraps incoming 'send' message into a 'message' message to the specified destination
+     * @param id
+     */
+    function send(id) {
+        if (msg.ack) { server._rememberAck(msg.ack, ws.broker_uuid); }
+
+        var destWs = server.id2ws[id];
+        if (destWs) {
+            if (destWs.readyState === WebSocket.OPEN) {
+                destWs.send(JSON.stringify({
+                    action: 'message',
+                    message: msg.message,
+                    ack: msg.ack,
+                    from: server.ws2id[ws.broker_uuid]
+                }));
+            } else {
+                err = new Error('Unable to send message. Client "'+id+'" disconnected');
+                server.emit('error', err);
+            }
+        } else {
+            server.emit('warn', new Error('Unable to send message. Client "'+id+'" unknown'));
+        }
+    }
+
+    if (typeof msg.dest === 'undefined' || typeof msg.message === 'undefined') {
+        server.emit('error', new Error('Unable to parse "send" message (msg.dest or msg.message are undefined)'));
+    } else {
+        if (typeof msg.dest === 'object' && msg.dest instanceof Array) {
+            // msg.dest is an array of IDs
+            msg.dest.forEach(function (id) {
+                send(id);
+            });
+
+        } else if (Object.prototype.toString.call(msg.dest) === '[object String]') {
+            // msg.dest is a String
+            send(msg.dest);
+
+        } else {
+            server.emit('error', new Error('Unable to parse "send" message (msg.dest must be an array of string IDs or a string)'));
+        }
+    }
+};
+
+},{"ws":133}],123:[function(require,module,exports){
 // Created by leiko on 29/10/14 16:03
 var WebSocket = require('ws');
 
@@ -56115,7 +56324,7 @@ module.exports = function (server, ws) {
         server.emit('unregistered', id);
     }
 };
-},{"ws":126}],117:[function(require,module,exports){
+},{"ws":133}],124:[function(require,module,exports){
 'use strict';
 var escapeStringRegexp = require('escape-string-regexp');
 var ansiStyles = require('ansi-styles');
@@ -56212,7 +56421,7 @@ if (chalk.enabled === undefined) {
 	chalk.enabled = chalk.supportsColor;
 }
 
-},{"ansi-styles":118,"escape-string-regexp":119,"has-ansi":120,"strip-ansi":122,"supports-color":124}],118:[function(require,module,exports){
+},{"ansi-styles":125,"escape-string-regexp":126,"has-ansi":127,"strip-ansi":129,"supports-color":131}],125:[function(require,module,exports){
 'use strict';
 var styles = module.exports;
 
@@ -56254,7 +56463,7 @@ Object.keys(codes).forEach(function (key) {
 	style.close = '\u001b[' + val[1] + 'm';
 });
 
-},{}],119:[function(require,module,exports){
+},{}],126:[function(require,module,exports){
 'use strict';
 
 var matchOperatorsRe = /[|\\{}()[\]^$+*?.]/g;
@@ -56267,19 +56476,19 @@ module.exports = function (str) {
 	return str.replace(matchOperatorsRe,  '\\$&');
 };
 
-},{}],120:[function(require,module,exports){
+},{}],127:[function(require,module,exports){
 'use strict';
 var ansiRegex = require('ansi-regex');
 var re = new RegExp(ansiRegex().source); // remove the `g` flag
 module.exports = re.test.bind(re);
 
-},{"ansi-regex":121}],121:[function(require,module,exports){
+},{"ansi-regex":128}],128:[function(require,module,exports){
 'use strict';
 module.exports = function () {
 	return /\u001b\[(?:[0-9]{1,3}(?:;[0-9]{1,3})*)?[m|K]/g;
 };
 
-},{}],122:[function(require,module,exports){
+},{}],129:[function(require,module,exports){
 'use strict';
 var ansiRegex = require('ansi-regex')();
 
@@ -56287,11 +56496,11 @@ module.exports = function (str) {
 	return typeof str === 'string' ? str.replace(ansiRegex, '') : str;
 };
 
-},{"ansi-regex":123}],123:[function(require,module,exports){
-arguments[4][121][0].apply(exports,arguments)
-},{"dup":121}],124:[function(require,module,exports){
+},{"ansi-regex":130}],130:[function(require,module,exports){
+arguments[4][128][0].apply(exports,arguments)
+},{"dup":128}],131:[function(require,module,exports){
 arguments[4][52][0].apply(exports,arguments)
-},{"_process":14,"dup":52}],125:[function(require,module,exports){
+},{"_process":14,"dup":52}],132:[function(require,module,exports){
 //     uuid.js
 //
 //     Copyright (c) 2010-2012 Robert Kieffer
@@ -56540,7 +56749,7 @@ arguments[4][52][0].apply(exports,arguments)
   }
 }).call(this);
 
-},{}],126:[function(require,module,exports){
+},{}],133:[function(require,module,exports){
 
 /**
  * Module dependencies.
