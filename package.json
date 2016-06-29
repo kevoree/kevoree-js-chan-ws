@@ -1,6 +1,6 @@
 {
   "name": "kevoree-chan-ws",
-  "version": "5.3.1",
+  "version": "5.3.2",
   "main": "./lib/WSChan.js",
   "kevoree": {
     "package": "org.kevoree.library"
@@ -15,8 +15,11 @@
     "channel"
   ],
   "dependencies": {
+    "bufferutil": "^1.2.1",
     "kevoree-entities": "^8.0.2",
-    "wsmsgbroker": "^1.6.7"
+    "utf-8-validate": "^1.2.1",
+    "ws": "^1.1.1",
+    "wsmsgbroker": "^1.7.0"
   },
   "devDependencies": {
     "grunt": "^0.4.5",
