@@ -1,6 +1,6 @@
 {
   "name": "kevoree-chan-ws",
-  "version": "5.3.3-alpha",
+  "version": "5.3.3-alpha.1",
   "main": "./lib/WSChan.js",
   "description": "A Kevoree chan that uses an external remote WebSocket server to share messages.<br/>This server must implement a <a href=\"https://github.com/maxleiko/wsmsgbroker\">specific protocol</a>",
   "kevoree": {
